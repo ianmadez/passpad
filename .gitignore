@@ -8,11 +8,14 @@ vendor/
 *.env
 !.env.example
 
-# Runtime state (the saved line) and logs
-state/
+# Host settings (START-PassPad.cmd), friend-side saved address, logs
+config/
+join.txt
+passpad.env
 *.log
 
 # OS and editor noise
 .DS_Store
 .idea/
 .vscode/
+logs/

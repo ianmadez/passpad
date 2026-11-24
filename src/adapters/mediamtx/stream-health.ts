@@ -13,7 +13,7 @@ type StreamHealthOptions = {
 };
 
 /**
- * Watches whether the console video is being published. Starts "up"; goes down after a few
+ * Watches whether the console video is being published. Starts "down" (nothing seen yet); goes down after a few
  * consecutive bad polls (one slow answer must not pause the game) and back up on the first good one.
  */
 export class StreamHealth {
@@ -22,7 +22,7 @@ export class StreamHealth {
   readonly #onChange: (up: boolean) => void;
   readonly #timeoutMs: number;
   readonly #failuresBeforeDown: number;
-  #up = true;
+  #up = false;
   #failures = 0;
   #inFlight: Promise<void> | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;

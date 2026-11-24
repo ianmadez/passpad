@@ -29,6 +29,6 @@ Development dependencies (not shipped to users):
 
 ## External services and tools (not bundled)
 
-The optional integrations talk to third-party services under their own terms: Kick (OAuth login and RTMPS ingest), Cloudflare (Tunnel), and a public STUN server. FFmpeg, cloudflared, Bun and Homebrew are installed separately and keep their own licenses.
+START-PassPad.cmd downloads Bun (MIT), MediaMTX (MIT) and the patched chiaki-ng build (AGPL-3.0, source: chiaki-ng plus `chiaki/*.patch`) from their GitHub releases, and installs Tailscale through winget; each keeps its own license and terms.
 
 "PlayStation", "PS5" and "DualSense" are trademarks of Sony Interactive Entertainment Inc. This project is not affiliated with or endorsed by Sony or any game publisher.

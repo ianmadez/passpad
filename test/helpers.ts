@@ -30,23 +30,5 @@ export class RecordingConsole implements ConsoleAdapter {
   }
 }
 
-/** Records every message the lobby sends. */
-export class RecordingNotifier {
-  readonly toPlayerLog: Array<{ id: string; message: Record<string, unknown> }> = [];
-  readonly toAllLog: Array<Record<string, unknown>> = [];
-
-  toPlayer(id: string, message: object | string): void {
-    this.toPlayerLog.push({ id, message: typeof message === 'string' ? JSON.parse(message) : message });
-  }
-
-  toAll(message: object | string): void {
-    this.toAllLog.push(typeof message === 'string' ? JSON.parse(message) : message);
-  }
-
-  sentTo(id: string, type: string): Record<string, unknown>[] {
-    return this.toPlayerLog.filter((entry) => entry.id === id && entry.message.type === type).map((e) => e.message);
-  }
-}
-
 /** Lets queued microtasks (throttled broadcasts) run. */
 export const flush = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));

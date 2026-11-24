@@ -52,7 +52,7 @@ export function scratchMediaMtxConfig(source: string, ports: ScratchPorts): stri
 }
 
 /** The API user in mediamtx/mediamtx.yml (authInternalUsers[1]). */
-export const MEDIAMTX_API_USER = 'playgta-api';
+export const MEDIAMTX_API_USER = 'passpad-api';
 
 /** Environment that makes a MediaMTX accept `pass` for the API user. */
 export function mediaMtxApiEnv(pass: string): Record<string, string> {

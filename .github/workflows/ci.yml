@@ -18,8 +18,24 @@ jobs:
           bun-version-file: package.json
       - run: bun install --frozen-lockfile
       - run: bun run check
-  shell:
+  powershell:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse the Windows scripts
+        shell: powershell
+        run: |
+          foreach ($f in 'scripts/start-host.ps1', 'scripts/join.ps1') {
+            $e = $null
+            [void][Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$e)
+            if ($e) { $e; exit 1 }
+          }
+  patches:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck -x -S warning deploy/macos/*.sh scripts/*.sh
+      - name: chiaki-ng patches still apply
+        run: |
+          git clone -q --filter=blob:none https://github.com/streetpea/chiaki-ng.git /tmp/c
+          git -C /tmp/c checkout -q 43728af2e639fecb8a7af1cd68c29820a40de973
+          for p in chiaki/*.patch; do git -C /tmp/c apply --check "$PWD/$p"; done

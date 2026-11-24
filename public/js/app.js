@@ -1,46 +1,47 @@
-// The reference player page: connection, line status, join/leave, video and input.
-// Every message it handles is documented in docs/protocol.md.
-import { startInput } from './input.js';
-import { helpLine, layoutFor } from './keymap.js';
-import { formatClock, lineSummary, reconnectDelay, statusText, turnLeftMs, videoEligible } from './line-view.js';
+// PassPad page: one file for both roles. The server tells us who we are (host or a guest name)
+// from our Tailscale address; body[data-role] shows the matching controls.
+import { firstPad, setDeadzone, startInput } from './input.js';
+import { layoutFor } from './keymap.js';
 import { StallWatch, WhepSession } from './video-player.js';
-
-const VIDEO_RETRY_MS = { offline: 3000, full: 10_000, error: 5000 };
-const JOIN_ERRORS = {
-  'line-full': 'The line is full. Try again in a bit.',
-  'origin-full': 'Someone on your connection is already in line.',
-  'account-in-line': 'This account is already in line.',
-};
 
 /** @type {(id: string) => any} */
 const $ = (id) => document.getElementById(id);
 
 const state = {
-  config: {},
   socket: null,
-  myId: null,
-  videoToken: null,
-  queue: { current: null, waiting: [], total: 0, paused: null },
-  /** 0 = in control, 1..n = waiting, null = not in line. */
-  position: null,
+  role: 'guest',
+  you: '',
+  guests: [],
+  online: [],
+  control: { controller: null, endsAt: null, turnMinutes: 15, requests: [] },
+  chiaki: { status: 'idle', quality: '1080p' },
+  videoUp: false,
+  console: 'chiaki',
+  shareUrl: '',
+  version: '?',
+  issuesUrl: '',
+  names: {},
   clockOffset: 0,
-  idleKickAt: null,
-  reconnecting: false,
-  reconnectAttempt: 0,
-  notice: '',
-  account: null,
-  frame: null,
+  started: false,
+  attempt: 0,
 };
 
-const isController = () => state.myId !== null && state.queue.current?.id === state.myId;
-const serverNow = () => Date.now() + state.clockOffset;
+/** The name someone typed, else their configured id ("host" reads as "Host"). */
+const label = (id) => state.names[id] ?? (id === 'host' ? 'Host' : id);
+const sendName = () => {
+  const name = store('name');
+  if (name) send({ type: 'name', value: name });
+};
 
-function session(key, value) {
+const serverNow = () => Date.now() + state.clockOffset;
+const inControl = () => state.role === 'guest' && state.control.controller === state.you;
+
+function store(key, value) {
   try {
-    if (value === undefined) return sessionStorage.getItem(key);
-    sessionStorage.setItem(key, value);
+    if (value === undefined) return localStorage.getItem(key);
+    localStorage.setItem(key, value);
   } catch {
-    // Storage blocked: the identity lasts this page load only.
+    // Storage blocked (private window): settings last this page load only.
   }
   return null;
 }
@@ -48,23 +49,20 @@ function session(key, value) {
 // ---------- connection ----------
 
 function connect() {
-  const resume = session('resume');
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-  const socket = new WebSocket(resume ? `${url}?resume=${encodeURIComponent(resume)}` : url);
+  const socket = new WebSocket(`ws://${location.host}/ws`);
   socket.binaryType = 'arraybuffer';
   state.socket = socket;
   socket.addEventListener('open', () => {
-    $('connection').textContent = 'Connected';
+    state.attempt = 0;
   });
-  socket.addEventListener('close', (event) => {
-    const tooMany = event.reason === 'too-many-connections';
-    $('connection').textContent = tooMany ? 'Too many tabs open' : 'Reconnecting…';
-    state.videoToken = null;
-    state.reconnecting = true;
-    video.stop();
-    render();
-    // Backoff with jitter: after a restart, hundreds of pages must not reconnect in step.
-    setTimeout(connect, tooMany ? 15_000 : reconnectDelay(state.reconnectAttempt++));
+  socket.addEventListener('close', () => {
+    if (state.attempt === 4)
+      trouble(
+        'Lost the connection to the host laptop',
+        'Is PassPad still running there, and is Tailscale connected on both laptops?',
+      );
+    setChip('who-chip', 'Reconnecting…', 'warn');
+    setTimeout(connect, Math.min(10_000, 500 * 2 ** state.attempt++));
   });
   socket.addEventListener('message', (event) => {
     if (typeof event.data === 'string') handle(JSON.parse(event.data));
@@ -79,40 +77,53 @@ function send(message) {
 function handle(message) {
   switch (message.type) {
     case 'hello':
-      if (state.myId && !message.resumed) state.notice = 'Your place was lost while you were away.';
-      state.myId = message.id;
-      state.videoToken = message.videoToken;
-      state.reconnecting = false;
-      state.reconnectAttempt = 0;
-      state.idleKickAt = null;
-      session('resume', message.resumeToken);
-      video.start();
-      break;
-    case 'queue':
-      state.queue = message;
+      state.role = message.role;
+      state.you = message.you;
+      state.guests = message.guests;
+      state.online = message.online;
+      state.chiaki = message.chiaki;
+      state.videoUp = message.video;
+      state.console = message.console;
+      state.shareUrl = message.shareUrl;
+      state.version = message.version ?? state.version;
+      state.issuesUrl = message.issuesUrl ?? state.issuesUrl;
+      state.names = message.names;
+      sendName();
       state.clockOffset = message.serverNow - Date.now();
+      onControl(message.control);
+      document.body.dataset.role = state.role;
+      if (state.started) video.start();
       break;
-    case 'count':
-      state.queue = { ...state.queue, total: message.total };
+    case 'control':
+      onControl(message);
       break;
-    case 'position':
-      state.position = Number.isInteger(message.position) ? message.position : null;
+    case 'names':
+      state.names = message.names;
       break;
-    case 'idle':
-      state.idleKickAt = typeof message.kickAt === 'number' ? message.kickAt : null;
-      state.clockOffset = message.serverNow - Date.now();
+    case 'online':
+      state.online = message.names;
       break;
-    case 'kicked':
-      state.notice =
-        message.reason === 'idle' ? 'You lost your turn for not moving.' : 'You were removed from the line.';
-      state.idleKickAt = null;
+    case 'chiaki':
+      state.chiaki = { status: message.status, quality: message.quality };
+      if (state.role === 'host' && (message.status === 'missing' || message.status === 'unpaired'))
+        trouble('The PS5 link needs attention', PS5_TEXT[message.status]);
       break;
-    case 'join-rejected':
-      if (message.reason === 'login-required') return startLogin();
-      state.notice = JOIN_ERRORS[message.reason] ?? 'Could not join.';
+    case 'video':
+      state.videoUp = message.up;
+      if (message.up && state.started) {
+        $('sim').hidden = true;
+        $('live').hidden = false;
+        video.start();
+      }
       break;
+    case 'pong':
+      showRtt(performance.now() - message.t);
+      return;
+    case 'input':
+      drawInput(message);
+      return;
     case 'frame':
-      state.frame = message;
+      drawSim(message);
       return;
     default:
       return;
@@ -120,227 +131,493 @@ function handle(message) {
   render();
 }
 
+function onControl(next) {
+  const before = state.control;
+  state.control = {
+    controller: next.controller,
+    endsAt: next.endsAt,
+    turnMinutes: next.turnMinutes,
+    requests: next.requests,
+  };
+  if (state.role === 'guest') {
+    if (next.controller === state.you && before.controller !== state.you) toast("You've got the pad. Go!");
+    if (before.controller === state.you && next.controller !== state.you)
+      toast('Turn over — the pad went back to the host.');
+  } else {
+    const fresh = next.requests.filter((name) => !before.requests.includes(name));
+    if (fresh.length) {
+      toast(`${fresh.map(label).join(', ')} wants the pad`);
+      chime();
+    }
+  }
+}
+
 // ---------- rendering ----------
 
+function setChip(id, text, tone = '') {
+  const chip = $(id);
+  chip.textContent = text;
+  chip.dataset.tone = tone;
+}
+
+const PS5_TEXT = {
+  missing: 'chiaki-ng is missing. Run START-PassPad.cmd again.',
+  unpaired: 'The PS5 is not paired yet. Run START-PassPad.cmd again and follow the pairing step.',
+  idle: 'Not connected.',
+  connecting: 'Connecting to the PS5… (wake it with the controller if it is asleep)',
+  streaming: 'Streaming.',
+};
+
 function render() {
-  const controlling = isController();
-  const inLine = controlling || (state.position ?? 0) >= 1;
-  $('status').textContent = statusText({
-    position: state.position,
-    controlling,
-    reconnecting: state.reconnecting,
-    notice: state.notice,
-    pausedReasons: state.queue.paused?.reasons,
-  });
-  $('line').textContent = lineSummary(state.queue);
-  $('join-form').hidden = inLine;
-  $('leave').hidden = !inLine;
-  if (video.blocked && inLine) video.start();
-  tick();
-}
+  const { controller, requests, turnMinutes } = state.control;
+  const host = state.role === 'host';
 
-/** Once a second: the turn clock and the idle countdown. */
-function tick() {
-  const current = state.queue.current;
-  let turn = current ? `${formatClock(turnLeftMs(state.queue, serverNow()))} left in this turn` : '';
-  if (isController() && state.idleKickAt !== null && !state.queue.paused) {
-    turn += ` · move or you lose your turn in ${Math.max(0, Math.ceil((state.idleKickAt - serverNow()) / 1000))} s`;
+  if (host)
+    setChip(
+      'who-chip',
+      controller ? `${label(controller)} is playing` : 'You have the pad',
+      controller ? 'live' : 'ok',
+    );
+  else if (inControl()) setChip('who-chip', 'Your turn', 'live');
+  else setChip('who-chip', controller ? `${label(controller)} is playing` : `${label('host')} has the pad`);
+
+  const quality = $('quality-chip');
+  quality.hidden = state.console !== 'chiaki';
+  quality.textContent = state.chiaki.quality;
+
+  // Host panels
+  const sim = state.console !== 'chiaki';
+  $('ps5-status').textContent = sim ? 'Simulator mode: no PS5 needed.' : (PS5_TEXT[state.chiaki.status] ?? '');
+  const live = state.chiaki.status === 'connecting' || state.chiaki.status === 'streaming';
+  $('connect').disabled = live || state.console !== 'chiaki';
+  $('disconnect').disabled = !live;
+  for (const b of document.querySelectorAll('[data-quality]')) {
+    b.ariaPressed = String(b.dataset.quality === state.chiaki.quality);
+    b.disabled = sim;
   }
-  $('turn').textContent = turn;
-  $('turn').hidden = !turn;
+  for (const b of document.querySelectorAll('[data-min]'))
+    b.ariaPressed = String(Number(b.dataset.min) === turnMinutes);
+  if (document.activeElement !== $('turn-custom')) $('turn-custom').value = String(turnMinutes);
+  $('reclaim').disabled = !controller;
+  $('extend').disabled = !controller;
+  $('copy-link').hidden = !state.shareUrl;
+  renderPeople(controller, requests);
+
+  // Guest panel
+  if (!host) {
+    const asked = requests.includes(state.you);
+    $('guest-title').textContent = inControl()
+      ? "You're driving"
+      : controller
+        ? `${label(controller)} is playing`
+        : 'Waiting for the host';
+    $('guest-text').textContent = inControl()
+      ? 'Your controller drives the PS5 until the clock runs out.'
+      : asked
+        ? 'Asked — the host got a notification.'
+        : 'When the host passes you the pad, your controller drives the PS5.';
+    $('request').hidden = inControl();
+    $('request').disabled = asked;
+  }
+
+  // Gate
+  const gate = $('gate');
+  gate.hidden = state.started && (state.videoUp || state.console === 'simulated');
+  if (state.started && !gate.hidden) {
+    $('gate-kicker').textContent = 'Stand by';
+    $('gate-title').textContent = 'No picture yet.';
+    $('gate-text').textContent = host
+      ? 'Press "Connect PS5" below. The first connection can take 20 seconds.'
+      : 'Waiting for the host to connect the PS5.';
+    $('gate-form').hidden = true;
+  }
+  renderClock();
 }
 
-// ---------- joining and login ----------
+function renderPeople(controller, requests) {
+  const list = $('people');
+  list.replaceChildren(
+    ...state.guests.map((name) => {
+      const li = document.createElement('li');
+      li.dataset.active = String(name === controller);
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.dataset.on = String(state.online.includes(name));
+      dot.title = state.online.includes(name) ? 'Online' : 'Offline';
+      const tag = document.createElement('span');
+      tag.className = 'name';
+      tag.textContent = label(name);
+      li.append(dot, tag);
+      if (requests.includes(name)) {
+        const ask = document.createElement('span');
+        ask.className = 'ask';
+        ask.textContent = 'wants the pad';
+        li.append(ask);
+      }
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = name === controller ? 'ghost' : 'primary';
+      button.textContent = name === controller ? 'Playing' : `Pass to ${label(name)}`;
+      button.disabled = name === controller;
+      button.addEventListener('click', () => send({ type: 'grant', value: name }));
+      li.append(button);
+      return li;
+    }),
+  );
+}
 
-$('join-form').addEventListener('submit', (event) => {
-  event.preventDefault();
-  if (state.config.login === 'kick' && !state.account) return startLogin();
+function renderClock() {
+  const { controller, endsAt, turnMinutes } = state.control;
+  const clock = $('clock');
+  clock.hidden = !controller || endsAt === null;
+  if (clock.hidden) return;
+  const left = Math.max(0, endsAt - serverNow());
+  const seconds = Math.ceil(left / 1000);
+  $('clock-name').textContent = controller === state.you ? 'Your turn' : label(controller);
+  $('clock-time').textContent =
+    `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  $('clock-fill').style.width = `${Math.min(100, (left / (turnMinutes * 60_000)) * 100)}%`;
+  clock.dataset.urgent = String(seconds <= 60);
+}
+setInterval(renderClock, 250);
+
+function showRtt(ms) {
+  const rounded = Math.round(ms);
+  setChip('rtt-chip', `${rounded} ms`, rounded < 220 ? 'ok' : rounded < 320 ? 'warn' : 'bad');
+}
+setInterval(() => send({ type: 'ping', t: performance.now() }), 2000);
+
+let toastTimer = 0;
+function toast(text) {
+  const el = $('toast');
+  el.textContent = text;
+  el.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (el.hidden = true), 5000);
+}
+
+/** A short two-note chime, so the host notices a request while watching the TV. */
+function chime() {
   try {
-    localStorage.setItem('name', $('name').value);
+    const ctx = new AudioContext();
+    for (const [i, freq] of [660, 880].entries()) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.15, ctx.currentTime + i * 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.15 + 0.3);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.15);
+      osc.stop(ctx.currentTime + i * 0.15 + 0.3);
+    }
   } catch {
-    // Not remembered: fine.
+    // No audio: the toast is enough.
   }
-  state.notice = '';
-  send({ type: 'join', name: $('name').value });
-});
-$('leave').addEventListener('click', () => send({ type: 'leave' }));
-$('logout').addEventListener('click', () => {
-  send({ type: 'leave' });
-  const reload = () => location.reload();
-  fetch('/auth/logout', { method: 'POST' }).then(reload, reload);
-});
-
-let loginStartedAt = 0;
-function startLogin() {
-  // One login at a time: an automatic redirect plus a click must not start two.
-  if (Date.now() - loginStartedAt < 5000) return;
-  loginStartedAt = Date.now();
-  location.href = '/auth/kick/login';
 }
 
 // ---------- video ----------
 
-/** The console video over WebRTC (WHEP through the server's proxy). */
 const video = {
   session: null,
-  stall: null,
-  starting: false,
-  blocked: false,
-  retry: null,
-
+  stream: null,
+  retry: 0,
   start() {
-    if (state.config.video !== 'webrtc' || !state.videoToken || this.starting) return;
-    const restream = Boolean(state.config.kickChannel);
-    const controller = isController();
-    const eligible = videoEligible({
-      restream,
-      controller,
-      position: state.position,
-      videoSpectators: state.config.videoSpectators ?? 0,
-    });
-    this.stop();
-    this.blocked = !eligible;
-    $('restream').hidden = eligible || !restream;
-    if (!eligible) return setStatus('Video is for the player in control and the next in line.');
-    this.starting = true;
-    const stream = new MediaStream();
-    const whep = new WhepSession({
+    if (!state.videoUp || this.session) return;
+    const el = $('live');
+    this.stream = new MediaStream();
+    el.srcObject = this.stream;
+    this.session = new WhepSession({
       route: '/api/video',
-      token: state.videoToken,
-      iceServers: state.config.iceServers ?? [],
       kinds: ['video', 'audio'],
       onTrack: (track) => {
-        stream.addTrack(track);
-        $('live').srcObject = stream;
+        this.stream.addTrack(track);
+        el.muted = false;
+        el.play().catch(() => {});
       },
-      onState: (phase) => {
-        if (this.session !== whep) return;
-        if (phase !== 'connected') return this.fail('The video dropped. Reconnecting…', VIDEO_RETRY_MS.error);
-        setStatus('');
-        $('live').hidden = false;
-        $('unmute').hidden = !$('live').muted;
+      onState: (s) => {
+        if (s === 'failed') this.restart(2000);
       },
     });
-    this.session = whep;
-    this.stall = new StallWatch();
-    whep
+    this.session
       .start()
       .then((status) => {
-        if (this.session !== whep) return;
-        if (status === 201) setStatus('Connecting video…');
-        else if (status === 503) this.fail('The console is offline.', VIDEO_RETRY_MS.offline);
-        else if (status === 429) {
-          $('restream').hidden = !restream;
-          this.fail('All video slots are taken.', VIDEO_RETRY_MS.full);
-        } else this.fail('Video failed. Retrying…', VIDEO_RETRY_MS.error);
+        if (status === 201) {
+          this.failures = 0;
+          return;
+        }
+        this.failed(`The video server answered ${status}.`);
       })
-      .catch(() => this.fail('Video failed. Retrying…', VIDEO_RETRY_MS.error))
-      .finally(() => {
-        this.starting = false;
-      });
+      .catch((error) => this.failed(String(error?.message ?? error)));
   },
-
   stop() {
-    clearTimeout(this.retry);
     this.session?.close();
     this.session = null;
-    $('live').hidden = true;
-    $('unmute').hidden = true;
   },
-
-  fail(message, retryMs) {
+  failures: 0,
+  failed(reason) {
+    logError(`video: ${reason}`);
+    if (++this.failures === 3) trouble('The video will not start', reason);
+    this.restart(3000);
+  },
+  restart(delay) {
     this.stop();
-    setStatus(message);
-    this.retry = setTimeout(() => this.start(), retryMs);
-  },
-
-  /** The console sends keyframes on request: ask for one when the controller's picture froze. */
-  async checkStall() {
-    const whep = this.session;
-    if (!whep || !isController() || whep.connection.connectionState !== 'connected') return;
-    const stats = await whep.videoStats().catch(() => null);
-    if (stats && this.stall.update(performance.now(), stats)) send({ type: 'video-stalled' });
+    clearTimeout(this.retry);
+    this.retry = setTimeout(() => state.videoUp && this.start(), delay);
   },
 };
 
-function setStatus(text) {
-  $('video-status').textContent = text;
+const stall = new StallWatch();
+setInterval(async () => {
+  const stats = await video.session?.videoStats();
+  if (stats && stall.update(performance.now(), stats)) send({ type: 'keyframe' });
+}, 500);
+
+// ---------- simulator and input visualizer ----------
+
+function drawSim(frame) {
+  if (!state.started || state.videoUp) return;
+  const canvas = $('sim');
+  canvas.hidden = false;
+  $('live').hidden = true;
+  const ctx = canvas.getContext('2d');
+  const { width: w, height: h } = canvas;
+  ctx.fillStyle = '#0b0b0f';
+  ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = '#1e1e28';
+  for (let x = 0; x < w; x += 64) ctx.strokeRect(x, 0, 64, h);
+  ctx.save();
+  ctx.translate(frame.x * w, frame.y * h);
+  ctx.rotate(frame.heading);
+  ctx.fillStyle = '#ff5a3c';
+  ctx.beginPath();
+  ctx.moveTo(22, 0);
+  ctx.lineTo(-14, 12);
+  ctx.lineTo(-14, -12);
+  ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = '#9a97a3';
+  ctx.font = '20px Jost, sans-serif';
+  ctx.fillText(frame.pressed.length ? frame.pressed.join(' ') : 'Simulated console — no PS5 needed', 24, h - 24);
+  if (state.role === 'host') drawInput(frame);
 }
 
-$('unmute').addEventListener('click', () => {
+function drawInput({ buttons, pressed, sticks, triggers }) {
+  const viz = $('viz');
+  viz.hidden = state.role !== 'host' || !$('viz-toggle').checked || !state.control.controller;
+  if (viz.hidden) return;
+  const on = pressed ?? Object.keys(buttons).filter((b) => buttons[b]);
+  for (const t of viz.querySelectorAll('[data-b]')) t.classList.toggle('on', on.includes(t.dataset.b));
+  $('viz-ls').setAttribute('cx', String(62 + sticks.lx * 20));
+  $('viz-ls').setAttribute('cy', String(72 + sticks.ly * 20));
+  $('viz-rs').setAttribute('cx', String(158 + sticks.rx * 20));
+  $('viz-rs').setAttribute('cy', String(72 + sticks.ry * 20));
+  $('viz-l2').setAttribute('width', String(triggers.l2 * 40));
+  $('viz-r2').setAttribute('width', String(triggers.r2 * 40));
+}
+
+// ---------- capture (screenshot and clip) ----------
+
+function download(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+}
+const stamp = () => new Date().toISOString().slice(0, 19).replaceAll(':', '-');
+
+$('shot').addEventListener('click', () => {
+  const source = $('live').hidden ? $('sim') : $('live');
+  const canvas = document.createElement('canvas');
+  canvas.width = source.videoWidth || source.width;
+  canvas.height = source.videoHeight || source.height;
+  if (!canvas.width) return toast('No picture to capture yet.');
+  canvas.getContext('2d').drawImage(source, 0, 0);
+  canvas.toBlob((blob) => blob && download(blob, `passpad-${stamp()}.png`));
+});
+
+let recorder = null;
+$('rec').addEventListener('click', () => {
+  if (recorder) {
+    recorder.stop();
+    return;
+  }
+  const stream = video.stream?.getTracks().length ? video.stream : $('sim').captureStream?.(30);
+  if (!stream) return toast('No picture to record yet.');
+  const chunks = [];
+  recorder = new MediaRecorder(stream, {
+    mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm',
+  });
+  recorder.addEventListener('dataavailable', (e) => e.data.size && chunks.push(e.data));
+  recorder.addEventListener('stop', () => {
+    download(new Blob(chunks, { type: 'video/webm' }), `passpad-${stamp()}.webm`);
+    recorder = null;
+    $('rec').dataset.on = 'false';
+    $('rec').textContent = 'Record';
+  });
+  recorder.start(1000);
+  $('rec').dataset.on = 'true';
+  $('rec').textContent = 'Stop & save';
+});
+
+// ---------- errors: log, copy, report ----------
+
+const errors = [];
+let troubleCount = 0;
+
+/** Keeps a short history and tells the server (it lands in logs/passpad.log on the host). */
+function logError(text) {
+  const line = `${new Date().toISOString()} ${text}`;
+  errors.push(line);
+  if (errors.length > 30) errors.shift();
+  send({ type: 'client-error', value: text.slice(0, 600) });
+}
+
+/** Shows the trouble panel. */
+function trouble(title, text) {
+  logError(`${title}: ${text}`);
+  troubleCount++;
+  $('trouble-title').textContent = title;
+  $('trouble-text').textContent = text;
+  $('trouble-count').textContent = troubleCount > 1 ? `(${troubleCount})` : '';
+  $('trouble').hidden = false;
+}
+
+const redact = (text) => text.replaceAll(/([a-z]+:\/\/)[^@\s/]+@/gi, '$1***@');
+
+async function details() {
+  let serverLog = [];
+  if (state.role === 'host') {
+    try {
+      serverLog = (await (await fetch('/api/logs')).json()).lines;
+    } catch {
+      serverLog = ['(could not read the server log)'];
+    }
+  }
+  return redact(
+    [
+      `PassPad ${state.version} · ${state.role} · ${new Date().toISOString()}`,
+      `Browser: ${navigator.userAgent}`,
+      `PS5 link: ${state.chiaki.status} (${state.chiaki.quality}) · video ${state.videoUp ? 'up' : 'down'} · console ${state.console}`,
+      `Page connection: ${state.socket?.readyState === WebSocket.OPEN ? 'open' : 'closed'} · controller: ${firstPad()?.id ?? 'none'}`,
+      `Problem: ${$('trouble-title').textContent} — ${$('trouble-text').textContent}`,
+      '',
+      'Page errors:',
+      ...(errors.length ? errors : ['(none)']),
+      ...(serverLog.length ? ['', 'Host log (most recent last):', ...serverLog.slice(-80)] : []),
+    ].join(String.fromCharCode(10)),
+  );
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+$('trouble-copy').addEventListener('click', async () => {
+  toast(
+    (await copyText(await details()))
+      ? 'Details copied. Paste them to whoever helps you.'
+      : 'Could not copy: your browser blocked it.',
+  );
+});
+$('trouble-report').addEventListener('click', async () => {
+  const text = await details();
+  const copied = await copyText(text);
+  // URLs over ~8 KB are refused by GitHub: the body is trimmed and the full text is on the clipboard.
+  const fence = '```';
+  const body = [
+    '**What happened?** (one line is fine)',
+    '',
+    '',
+    `**Details** ${copied ? '(full version copied to your clipboard; paste it here if this one is cut off)' : ''}`,
+    '',
+    fence,
+    text.slice(0, 5000),
+    fence,
+  ].join(String.fromCharCode(10));
+  const url = `${state.issuesUrl}?${new URLSearchParams({ title: `[${state.role}] ${$('trouble-title').textContent}`, body, labels: 'bug' })}`;
+  window.open(url, '_blank', 'noopener');
+});
+$('trouble-close').addEventListener('click', () => ($('trouble').hidden = true));
+
+window.addEventListener('error', (event) =>
+  trouble('The page hit an error', `${event.message} (${event.filename?.split('/').pop()}:${event.lineno})`),
+);
+window.addEventListener('unhandledrejection', (event) =>
+  trouble('The page hit an error', String(event.reason?.message ?? event.reason)),
+);
+
+// ---------- controls ----------
+
+$('gate-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  state.started = true;
+  const typed = $('your-name').value.trim();
+  if (typed) store('name', typed);
+  sendName();
+  video.start();
   $('live').muted = false;
-  $('unmute').hidden = true;
   $('live')
     .play()
     .catch(() => {});
+  render();
+});
+$('connect').addEventListener('click', () => send({ type: 'connect' }));
+$('disconnect').addEventListener('click', () => send({ type: 'disconnect' }));
+$('reclaim').addEventListener('click', () => send({ type: 'reclaim' }));
+$('extend').addEventListener('click', () => send({ type: 'extend', value: 5 }));
+$('request').addEventListener('click', () => send({ type: 'request' }));
+for (const b of document.querySelectorAll('[data-quality]'))
+  b.addEventListener('click', () => send({ type: 'quality', value: b.dataset.quality }));
+for (const b of document.querySelectorAll('[data-min]'))
+  b.addEventListener('click', () => send({ type: 'turn-minutes', value: Number(b.dataset.min) }));
+$('turn-custom').addEventListener('change', (e) => send({ type: 'turn-minutes', value: Number(e.target.value) }));
+$('copy-link').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(state.shareUrl);
+    toast(`Copied ${state.shareUrl} — send it to your friends.`);
+  } catch {
+    toast(state.shareUrl);
+  }
+});
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && state.role === 'host' && state.control.controller) send({ type: 'reclaim' });
 });
 
-/** Simulated console: a dot where the left stick drove it. */
-function drawSimulator() {
-  const canvas = $('sim');
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (state.frame) {
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(state.frame.x * canvas.width, state.frame.y * canvas.height, 8, 0, 2 * Math.PI);
-    ctx.fill();
-    ctx.fillText(`Buttons: ${state.frame.pressed.join(' ') || '-'}`, 8, canvas.height - 8);
-  }
-  requestAnimationFrame(drawSimulator);
-}
+const fullscreen = () => (document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen());
+$('fullscreen').addEventListener('click', fullscreen);
+$('stage').addEventListener('dblclick', fullscreen);
+$('collapse').addEventListener('click', () => {
+  const collapsed = $('dock').classList.toggle('collapsed');
+  $('collapse').ariaExpanded = String(!collapsed);
+  $('collapse').textContent = collapsed ? 'Show' : 'Hide';
+});
 
-// ---------- boot ----------
+const savedDz = store('deadzone');
+if (savedDz !== null) $('deadzone').value = savedDz;
+const applyDz = () => {
+  setDeadzone($('deadzone').value);
+  $('dz-out').textContent = Number($('deadzone').value).toFixed(2);
+  store('deadzone', $('deadzone').value);
+};
+$('deadzone').addEventListener('input', applyDz);
+applyDz();
 
-async function boot() {
-  state.config = await fetch('/config.json')
-    .then((r) => r.json())
-    .catch(() => ({}));
-  const name = state.config.name ?? 'PlayGTA';
-  document.title = name;
-  $('title').textContent = name;
-  const layout = layoutFor(state.config.keyboardLayout);
-  const showHelp = (driving = false) => {
-    $('help').textContent = helpLine(layout, { driving });
-  };
-  showHelp();
-  try {
-    $('name').value = localStorage.getItem('name') ?? '';
-  } catch {
-    // Storage blocked.
-  }
-  if (state.config.kickChannel) {
-    $('restream-link').href = `https://kick.com/${encodeURIComponent(state.config.kickChannel)}`;
-  }
-  if (state.config.login === 'kick') {
-    const me = await fetch('/auth/me')
-      .then((r) => r.json())
-      .catch(() => ({}));
-    state.account = typeof me.name === 'string' ? me.name : null;
-    $('name').hidden = true;
-    $('join').textContent = state.account ? 'Join the line' : 'Log in with Kick to play';
-    $('account').hidden = !state.account;
-    $('account-name').textContent = state.account ? `Logged in as ${state.account}.` : '';
-    const result = new URLSearchParams(location.search).get('login');
-    if (result) {
-      state.notice = result === 'cancelled' ? 'Login cancelled.' : 'Login failed. Try again.';
-      history.replaceState(null, '', location.pathname);
-    }
-  }
-  if (state.config.video === 'webrtc') setStatus('Connecting video…');
-  else if (state.config.console === 'simulated') {
-    $('sim').hidden = false;
-    requestAnimationFrame(drawSimulator);
-  } else setStatus('No video on this server.');
+setInterval(() => {
+  const pad = firstPad();
+  if (!pad) return setChip('pad-chip', 'No controller — press a button', 'warn');
+  const kind = /xinput|xbox/i.test(pad.id) ? 'XInput' : pad.mapping === 'standard' ? 'Standard' : 'Gamepad';
+  setChip('pad-chip', `${kind} controller connected`, 'ok');
+}, 1000);
 
-  render();
-  connect();
-  startInput({ active: isController, send, layout, screen: $('screen'), onDrivingChange: showHelp });
-  setInterval(tick, 1000);
-  setInterval(() => void video.checkStall(), 250);
-  // Keeps the socket alive through proxies that drop idle connections.
-  setInterval(() => send({ type: 'ping', t: performance.now() }), 25_000);
-}
-
-void boot();
+startInput({ active: inControl, send, layout: layoutFor('gta'), screen: $('stage') });
+connect();
+$('your-name').value = store('name') ?? '';
+// #watch skips the start gate (the host's desktop shortcut uses it; the video starts muted then).
+if (location.hash === '#watch') $('gate-form').requestSubmit();
+render();

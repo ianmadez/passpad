@@ -22,7 +22,7 @@ bun run check    # typecheck + lint + format check + tests
 ## Pull requests
 
 - One topic per pull request, with tests for behavior changes.
-- `bun run check` and `shellcheck -x -S warning deploy/macos/*.sh scripts/*.sh` must pass.
+- `bun run check` must pass, and `scripts/*.ps1` must parse in Windows PowerShell 5.1.
 - Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`...).
 - Document new settings in `docs/configuration.md` and `.env.example`.
 - Never include secrets, personal data or real IP addresses in code, tests or examples. Use the

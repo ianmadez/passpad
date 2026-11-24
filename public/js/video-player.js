@@ -1,8 +1,8 @@
 // WHEP playback through the server's signaling proxy, and frozen-picture detection.
 
 const ICE_GATHERING_TIMEOUT_MS = 2000;
-/** Playout buffer: smoothness over the last ~0.1 s of latency. */
-const PLAYOUT_BUFFER_MS = 100;
+/** Playout buffer: on a ~180 ms intercontinental link, keep jitter buffering small. */
+const PLAYOUT_BUFFER_MS = 20;
 
 /** Resolves once ICE gathering is done (or after a short timeout: what we have is enough). */
 function iceGatheringDone(connection) {
@@ -22,13 +22,15 @@ function iceGatheringDone(connection) {
  * (201 = connecting); `onState` reports 'connected' and 'failed'.
  */
 export class WhepSession {
-  constructor({ route, token, iceServers, kinds, onTrack, onState }) {
+  constructor({ route, kinds, onTrack, onState }) {
     this.route = route;
-    this.token = token;
-    this.connection = new RTCPeerConnection({ iceServers });
+    // No STUN/TURN: both ends are on Tailscale, so host candidates are enough.
+    this.connection = new RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' });
     for (const kind of kinds) this.connection.addTransceiver(kind, { direction: 'recvonly' });
     this.connection.addEventListener('track', (event) => {
       if ('jitterBufferTarget' in event.receiver) event.receiver.jitterBufferTarget = PLAYOUT_BUFFER_MS;
+      // Firefox's older knob, in seconds.
+      else if ('playoutDelayHint' in event.receiver) event.receiver.playoutDelayHint = PLAYOUT_BUFFER_MS / 1000;
       onTrack(event.track);
     });
     this.connection.addEventListener('connectionstatechange', () => {
@@ -43,7 +45,7 @@ export class WhepSession {
     await iceGatheringDone(this.connection);
     const response = await fetch(this.route, {
       method: 'POST',
-      headers: { 'content-type': 'application/sdp', 'x-video-token': this.token },
+      headers: { 'content-type': 'application/sdp' },
       body: this.connection.localDescription.sdp,
     });
     if (response.status === 201) {
@@ -54,7 +56,7 @@ export class WhepSession {
 
   close() {
     this.connection.close();
-    fetch(this.route, { method: 'DELETE', headers: { 'x-video-token': this.token } }).catch(() => {});
+    fetch(this.route, { method: 'DELETE' }).catch(() => {});
   }
 
   /** Inbound video stats, or null. */

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { BUTTON_ORDER } from '../public/js/input-codec.js';
 import { helpLine, isLayoutKey, LAYOUTS, layoutFor, mapKeys, PAD_BUTTONS } from '../public/js/keymap.js';
 import { MouseLook } from '../public/js/mouse-look.js';
-import { KEYBOARD_LAYOUTS } from '../src/adapters/config/env-config.ts';
+const KEYBOARD_LAYOUTS = ['gta', 'generic'] as const;
 
 const { generic, gta } = LAYOUTS;
 const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;

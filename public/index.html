@@ -3,47 +3,153 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="description" content="Take turns controlling a real console from your browser." />
-    <title>PlayGTA</title>
+    <meta name="color-scheme" content="dark" />
+    <title>PassPad</title>
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="/css/style.css" />
   </head>
-  <body>
-    <header>
-      <h1 id="title">PlayGTA</h1>
-      <p id="connection" role="status">Connecting…</p>
+  <body data-role="guest">
+    <header class="bar" id="bar">
+      <p class="brand">Pass<span>Pad</span></p>
+      <p class="chip" id="who-chip" role="status">Connecting…</p>
+      <p class="chip mono" id="rtt-chip" title="Round trip to the host laptop">— ms</p>
+      <p class="chip mono" id="quality-chip" title="Stream quality" hidden></p>
+      <p class="chip" id="pad-chip" title="Controller">No controller</p>
+      <span class="spacer"></span>
+      <button class="ghost" id="shot" type="button" title="Save a screenshot">Screenshot</button>
+      <button class="ghost" id="rec" type="button" title="Record a clip (press again to save)">Record</button>
+      <button class="ghost" id="fullscreen" type="button" title="Fullscreen (or double-click the video)">
+        Fullscreen
+      </button>
+      <button
+        class="ghost"
+        id="collapse"
+        type="button"
+        aria-expanded="true"
+        aria-controls="dock"
+        title="Hide the controls"
+      >
+        Hide
+      </button>
     </header>
 
-    <main>
-      <div id="screen">
-        <video id="live" playsinline autoplay muted hidden></video>
-        <canvas id="sim" width="640" height="360" aria-label="Simulated console" hidden></canvas>
-        <p id="video-status"></p>
+    <main class="stage" id="stage">
+      <video id="live" playsinline autoplay muted></video>
+      <canvas id="sim" width="1280" height="720" aria-label="Simulated console" hidden></canvas>
+
+      <div class="clock" id="clock" hidden>
+        <span class="clock-name" id="clock-name"></span>
+        <span class="clock-time mono" id="clock-time" role="timer">00:00</span>
+        <span class="clock-bar"><span id="clock-fill"></span></span>
       </div>
-      <p><button id="unmute" type="button" hidden>Unmute</button></p>
-      <p id="restream" hidden>
-        <a id="restream-link" href="/" target="_blank" rel="noopener noreferrer">Watch the restream on Kick</a>
-      </p>
 
-      <section aria-label="Line">
-        <p id="status" aria-live="polite">Join the line to play.</p>
-        <p id="turn" role="timer" hidden></p>
-        <p id="line"></p>
-        <form id="join-form">
-          <input id="name" maxlength="20" autocomplete="off" placeholder="Your name" aria-label="Your name" />
-          <button id="join" type="submit">Join the line</button>
+      <div class="gate" id="gate">
+        <p class="gate-kicker" id="gate-kicker">PassPad</p>
+        <h1 class="gate-title" id="gate-title">Tap in.</h1>
+        <p class="gate-text" id="gate-text">Click once so the browser lets the video and sound play.</p>
+        <form class="gate-form" id="gate-form">
+          <label class="field">
+            <span>Your name (so your friends know who's playing)</span>
+            <input id="your-name" maxlength="24" autocomplete="nickname" placeholder="e.g. Patrick" />
+          </label>
+          <button class="primary big" id="start" type="submit">Start video &amp; sound</button>
         </form>
-        <p><button id="leave" type="button" hidden>Leave the line</button></p>
-        <p id="account" hidden><span id="account-name"></span> <button id="logout" type="button">Log out</button></p>
-      </section>
+      </div>
 
-      <p id="help"></p>
+      <p class="notice" id="notice" role="status" hidden></p>
+      <svg class="viz" id="viz" viewBox="0 0 220 120" aria-label="Live controller input" hidden>
+        <rect class="viz-trigger" x="20" y="6" width="40" height="8" rx="2" />
+        <rect class="viz-trigger-fill" id="viz-l2" x="20" y="6" width="0" height="8" rx="2" />
+        <rect class="viz-trigger" x="160" y="6" width="40" height="8" rx="2" />
+        <rect class="viz-trigger-fill" id="viz-r2" x="160" y="6" width="0" height="8" rx="2" />
+        <circle class="viz-ring" cx="62" cy="72" r="26" />
+        <circle class="viz-dot" id="viz-ls" cx="62" cy="72" r="8" />
+        <circle class="viz-ring" cx="158" cy="72" r="26" />
+        <circle class="viz-dot" id="viz-rs" cx="158" cy="72" r="8" />
+        <g id="viz-buttons" class="viz-buttons">
+          <text x="110" y="40" data-b="triangle">△</text>
+          <text x="96" y="56" data-b="square">□</text>
+          <text x="124" y="56" data-b="circle">○</text>
+          <text x="110" y="72" data-b="cross">✕</text>
+          <text x="40" y="30" data-b="l1">L1</text>
+          <text x="180" y="30" data-b="r1">R1</text>
+          <text x="110" y="100" data-b="touchpad">TP</text>
+          <text x="86" y="100" data-b="create">⧉</text>
+          <text x="134" y="100" data-b="options">≡</text>
+        </g>
+      </svg>
     </main>
 
-    <footer>
-      <p><a href="https://gtalab.dev" target="_blank" rel="noopener noreferrer">PlayGTA by gtalab</a></p>
-    </footer>
+    <section class="dock" id="dock" aria-label="Controls">
+      <!-- Host -->
+      <div class="panel host-only">
+        <h2>PS5</h2>
+        <div class="row">
+          <button class="primary" id="connect" type="button">Connect PS5</button>
+          <button class="ghost" id="disconnect" type="button">Disconnect</button>
+        </div>
+        <div class="row seg" role="group" aria-label="Quality">
+          <button type="button" class="seg-btn" data-quality="1080p">1080p</button>
+          <button type="button" class="seg-btn" data-quality="720p">720p</button>
+        </div>
+        <p class="hint" id="ps5-status">Not connected.</p>
+      </div>
 
+      <div class="panel host-only grow">
+        <h2>Who's playing</h2>
+        <ul class="people" id="people"></ul>
+        <button class="danger big" id="reclaim" type="button">Take the pad back <kbd>Esc</kbd></button>
+      </div>
+
+      <div class="panel host-only">
+        <h2>Turn length</h2>
+        <div class="row seg" role="group" aria-label="Turn length in minutes" id="turn-seg">
+          <button type="button" class="seg-btn" data-min="10">10</button>
+          <button type="button" class="seg-btn" data-min="12">12</button>
+          <button type="button" class="seg-btn" data-min="15">15</button>
+        </div>
+        <label class="field">
+          <span>Custom (min)</span>
+          <input id="turn-custom" type="number" min="1" max="60" step="1" inputmode="numeric" />
+        </label>
+        <button class="ghost" id="extend" type="button">+5 min to this turn</button>
+        <label class="toggle"><input id="viz-toggle" type="checkbox" checked /> Show their inputs</label>
+        <button class="ghost" id="copy-link" type="button">Copy friend link</button>
+      </div>
+
+      <!-- Guest -->
+      <div class="panel guest-only grow">
+        <h2 id="guest-title">Waiting for the host</h2>
+        <p class="hint" id="guest-text">When it's your turn, your controller drives the PS5.</p>
+        <button class="primary big" id="request" type="button">Ask for the pad</button>
+      </div>
+
+      <div class="panel guest-only">
+        <h2>Controller</h2>
+        <label class="field">
+          <span>Stick dead zone <output id="dz-out" class="mono">0.08</output></span>
+          <input id="deadzone" type="range" min="0" max="0.3" step="0.01" value="0.08" />
+        </label>
+        <p class="hint">
+          No touchpad on your pad? Hold <kbd>Back</kbd>+<kbd>Y</kbd> or <kbd>L3</kbd>+<kbd>R3</kbd>, or press
+          <kbd>Tab</kbd>.
+        </p>
+      </div>
+    </section>
+
+    <div class="toast" id="toast" role="alert" hidden></div>
+
+    <aside class="trouble" id="trouble" role="alertdialog" aria-labelledby="trouble-title" hidden>
+      <p class="trouble-kicker">Something went wrong <span id="trouble-count" class="mono"></span></p>
+      <h2 id="trouble-title">Problem</h2>
+      <p id="trouble-text" class="hint"></p>
+      <div class="row">
+        <button class="primary" id="trouble-copy" type="button">Copy details</button>
+        <button class="ghost" id="trouble-report" type="button">Report on GitHub</button>
+        <button class="ghost" id="trouble-close" type="button">Dismiss</button>
+      </div>
+      <p class="hint">Details include versions, status and recent logs. Passwords are removed automatically.</p>
+    </aside>
     <script type="module" src="/js/app.js"></script>
   </body>
 </html>

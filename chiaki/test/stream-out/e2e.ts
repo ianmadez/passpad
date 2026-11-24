@@ -209,7 +209,7 @@ async function chromePage(debugPort: number, url: string) {
 // ---------- scenario ----------
 
 async function main() {
-  scratch = await mkdtemp(join(tmpdir(), 'playgta-stream-out-'));
+  scratch = await mkdtemp(join(tmpdir(), 'passpad-stream-out-'));
   const [rtspPort, webrtcPort, apiPort, icePort, webPort, debugPort] = (await Promise.all(
     Array.from({ length: 6 }, freePort),
   )) as [number, number, number, number, number, number];

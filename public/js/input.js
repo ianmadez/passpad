@@ -10,7 +10,14 @@ const MIN_SEND_MS = 8;
 const HEARTBEAT_MS = 200;
 /** Shorter taps (and clicks) are held this long so they survive sampling. */
 const MIN_PRESS_MS = 80;
-const DEADZONE = 0.12;
+/** Radial dead zone for off-brand sticks; the guest can change it in Settings. */
+let deadzoneSize = 0.08;
+/** Hold a chord this long to click the touchpad (XInput pads have no touchpad). */
+const CHORD_MS = 150;
+const CHORDS = [
+  [8, 3], // Back + Y
+  [10, 11], // L3 + R3
+];
 const TRIGGERS = { l2: 6, r2: 7 };
 /** Mouse buttons the layouts can use, as input codes (keymap.js). */
 const MOUSE_CODES = ['Mouse0', 'Mouse2'];
@@ -18,26 +25,53 @@ const MOUSE_CODES = ['Mouse0', 'Mouse2'];
 /** Radial dead zone: kills drift without the square "snap" of per-axis dead zones. */
 function deadzone(x, y) {
   const magnitude = Math.hypot(x, y);
-  if (magnitude < DEADZONE) return [0, 0];
-  const scaled = Math.min(1, (magnitude - DEADZONE) / (1 - DEADZONE));
+  if (magnitude < deadzoneSize) return [0, 0];
+  const scaled = Math.min(1, (magnitude - deadzoneSize) / (1 - deadzoneSize));
   return [(x / magnitude) * scaled, (y / magnitude) * scaled];
 }
 const stronger = (a, b) => (Math.hypot(b[0], b[1]) > Math.hypot(a[0], a[1]) ? b : a);
+
+/** Sets the stick dead zone (0-0.3). */
+export function setDeadzone(value) {
+  deadzoneSize = Math.max(0, Math.min(0.3, Number(value) || 0));
+}
+
+/** The first connected gamepad, or null. */
+export function firstPad() {
+  return [...(navigator.getGamepads?.() ?? [])].find((g) => g?.connected) ?? null;
+}
+
+let chordSince = 0;
+/**
+ * Touchpad click synthesis: a held chord (Back+Y or L3+R3) becomes a touchpad click, and the
+ * chord's own buttons are dropped so the game does not also see Y or a stick click.
+ */
+function applyChords(pad, buttons, now) {
+  const held = CHORDS.find((chord) => chord.every((i) => pad.buttons[i]?.pressed));
+  if (!held) {
+    chordSince = 0;
+    return;
+  }
+  chordSince ||= now;
+  for (const i of held) buttons[PAD_BUTTONS[i]] = false;
+  if (now - chordSince >= CHORD_MS) buttons.touchpad = true;
+}
 
 /**
  * Merges the keyboard and mouse (already mapped by the layout) with the first connected gamepad
  * into { buttons, triggers, sticks }. The gamepad is read the same way whatever the layout.
  */
-function sample(keys, mouse) {
+function sample(keys, mouse, now) {
   const buttons = { ...keys.buttons };
   const triggers = { l2: 0, r2: 0 };
   let left = [keys.sticks.lx, keys.sticks.ly];
   let right = stronger([keys.sticks.rx, keys.sticks.ry], mouse);
-  const pad = [...(navigator.getGamepads?.() ?? [])].find((g) => g?.connected);
+  const pad = firstPad();
   if (pad) {
     pad.buttons.forEach((b, i) => {
       if (b.pressed && PAD_BUTTONS[i]) buttons[PAD_BUTTONS[i]] = true;
     });
+    applyChords(pad, buttons, now);
     for (const [name, index] of Object.entries(TRIGGERS)) triggers[name] = pad.buttons[index]?.value ?? 0;
     left = stronger(left, deadzone(pad.axes[0] ?? 0, pad.axes[1] ?? 0));
     right = stronger(right, deadzone(pad.axes[2] ?? 0, pad.axes[3] ?? 0));
@@ -80,7 +114,14 @@ export function startInput({ active, send, layout, screen, onDrivingChange = () 
     onDrivingChange(on);
   };
 
+  let tabHeld = false;
   window.addEventListener('keydown', (event) => {
+    // With a gamepad, Tab is the touchpad (interaction menu); without one it stays a layout key.
+    if (event.code === 'Tab' && firstPad() && active()) {
+      event.preventDefault();
+      tabHeld = true;
+      return;
+    }
     if (!isLayoutKey(layout, event.code) || typing()) return;
     if (active()) event.preventDefault();
     if (event.code === layout.driving?.toggle) {
@@ -89,10 +130,14 @@ export function startInput({ active, send, layout, screen, onDrivingChange = () 
     }
     latch.press(event.code, performance.now(), event.repeat);
   });
-  window.addEventListener('keyup', (event) => latch.release(event.code, performance.now()));
+  window.addEventListener('keyup', (event) => {
+    if (event.code === 'Tab') tabHeld = false;
+    latch.release(event.code, performance.now());
+  });
   const releaseAll = () => {
     latch.reset();
     look.reset();
+    tabHeld = false;
     if (active()) send(encodeInput({}));
     lastFrame = null;
   };
@@ -133,7 +178,9 @@ export function startInput({ active, send, layout, screen, onDrivingChange = () 
     const now = performance.now();
     const keys = mapKeys(layout, latch.held(now), { driving });
     const mouse = locked() ? look.sample(now) : [0, 0];
-    const frame = encodeInput(sample(keys, mouse));
+    const state = sample(keys, mouse, now);
+    if (tabHeld) state.buttons.touchpad = true;
+    const frame = encodeInput(state);
     const changed = !sameFrame(frame, lastFrame);
     if ((changed && now - lastSentAt >= MIN_SEND_MS) || now - lastSentAt >= HEARTBEAT_MS) {
       send(frame);

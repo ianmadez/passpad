@@ -18,3 +18,10 @@ describe('mediamtx/mediamtx.yml', () => {
     }
   });
 });
+
+describe('mediamtx/mediamtx.yml on the tailnet', () => {
+  it('never uses STUN or interface discovery, so ICE stays on Tailscale', () => {
+    expect(value('webrtcIPsFromInterfaces')).toBe('false');
+    expect(value('webrtcICEServers2')).toBe('[]');
+  });
+});

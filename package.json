@@ -1,9 +1,9 @@
 {
-  "name": "playgta",
-  "version": "0.1.0",
+  "name": "passpad",
+  "version": "0.2.0",
   "private": true,
-  "description": "Let internet visitors take turns controlling a game console from the browser. A gtalab project.",
-  "homepage": "https://gtalab.dev",
+  "description": "Pass the pad: share your PS5 with 1-4 friends over Tailscale, right in the browser. The host stays in charge.",
+  "homepage": "https://github.com/ianmadez/passpad",
   "license": "MIT",
   "author": "gtalab (https://gtalab.dev)",
   "type": "module",
@@ -17,15 +17,9 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run test",
-    "video": "vendor/mediamtx/mediamtx mediamtx/mediamtx.yml",
-    "overlay": "bun scripts/kick-overlay.ts",
-    "admin": "bun scripts/admin.ts",
-    "chiaki:build": "scripts/build-chiaki.sh",
-    "chiaki:test-netinput": "scripts/test-chiaki-netinput.sh",
-    "chiaki:test-stream-out": "scripts/test-chiaki-stream-out.sh"
+    "video": "vendor/mediamtx/mediamtx.exe mediamtx/mediamtx.yml"
   },
   "dependencies": {
-    "@napi-rs/canvas": "1.1.1",
     "ws": "8.23.0"
   },
   "devDependencies": {

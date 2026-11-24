@@ -13,6 +13,7 @@ const MIME: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.ttf': 'font/ttf',
   '.txt': 'text/plain; charset=utf-8',
 };
 const COMPRESSIBLE = new Set(['.html', '.js', '.css', '.svg', '.txt']);
