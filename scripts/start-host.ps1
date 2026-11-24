@@ -106,6 +106,13 @@ function Get-Verified([string]$Url, [string]$Dest, [string]$ExpectedSha) {
   }
 }
 
+function Get-Text([string]$Url) {
+  # GitHub release assets come back as octet-stream; PS 5.1 then gives .Content as byte[].
+  $c = (Invoke-WebRequest -Uri $Url -UseBasicParsing).Content
+  if ($c -is [byte[]]) { return [Text.Encoding]::UTF8.GetString($c) }
+  return [string]$c
+}
+
 function Find-Sha([string]$SumsText, [string]$FileName) {
   foreach ($line in ($SumsText -split "`n")) {
     if ($line -match '^([0-9a-fA-F]{64})\s+\*?(.+?)\s*$' -and $Matches[2] -eq $FileName) { return $Matches[1] }
@@ -118,7 +125,7 @@ function Install-Bun {
   if (Test-Path $exe) { return $exe }
   Step 'Getting Bun (runs the PassPad server)'
   $base = "https://github.com/oven-sh/bun/releases/download/bun-v$BunVersion"
-  $sums = (Invoke-WebRequest -Uri "$base/SHASUMS256.txt" -UseBasicParsing).Content
+  $sums = Get-Text "$base/SHASUMS256.txt"
   $zip = Join-Path $env:TEMP 'passpad-bun.zip'
   Get-Verified "$base/bun-windows-x64.zip" $zip (Find-Sha $sums 'bun-windows-x64.zip')
   $tmp = Join-Path $env:TEMP 'passpad-bun'
@@ -137,7 +144,7 @@ function Install-Mediamtx {
   Step 'Getting MediaMTX (sends the video to your friends)'
   $base = "https://github.com/bluenviron/mediamtx/releases/download/$MediamtxVersion"
   $name = "mediamtx_$($MediamtxVersion)_windows_amd64.zip"
-  $sums = (Invoke-WebRequest -Uri "$base/checksums.sha256" -UseBasicParsing).Content
+  $sums = Get-Text "$base/checksums.sha256"
   $zip = Join-Path $env:TEMP $name
   Get-Verified "$base/$name" $zip (Find-Sha $sums $name)
   New-Item -ItemType Directory -Force (Split-Path $exe) | Out-Null
@@ -153,7 +160,7 @@ function Install-Chiaki {
   Step 'Getting chiaki-ng (talks to the PS5; PassPad build)'
   $base = "https://github.com/$Repo/releases/latest/download"
   $name = 'chiaki-ng-passpad-win64.zip'
-  try { $sha = ((Invoke-WebRequest -Uri "$base/$name.sha256" -UseBasicParsing).Content -split '\s+')[0] }
+  try { $sha = ((Get-Text "$base/$name.sha256") -split '\s+')[0] }
   catch { Fail "Could not find the chiaki-ng download on GitHub ($Repo releases). Ask whoever sent you PassPad to publish a release." }
   $zip = Join-Path $env:TEMP $name
   Get-Verified "$base/$name" $zip $sha
@@ -456,7 +463,7 @@ function Run-Update {
   $asset = $api.assets | Where-Object { $_.name -eq 'passpad-windows.zip' }
   $sum = $api.assets | Where-Object { $_.name -eq 'passpad-windows.zip.sha256' }
   if (-not $asset -or -not $sum) { Fail 'The newest release has no Windows package yet.' }
-  $sha = ((Invoke-WebRequest -Uri $sum.browser_download_url -UseBasicParsing).Content -split '\s+')[0]
+  $sha = ((Get-Text $sum.browser_download_url) -split '\s+')[0]
   $zip = Join-Path $env:TEMP 'passpad-update.zip'
   Get-Verified $asset.browser_download_url $zip $sha
   $tmp = Join-Path $env:TEMP 'passpad-update'

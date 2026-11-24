@@ -1,5 +1,15 @@
 # Patch notes
 
+## v0.2.3 — the starter works on Windows PowerShell
+
+- **Fixed "No published fingerprint for bun-windows-x64.zip":** GitHub sends checksum files as
+  raw binary data, and Windows PowerShell 5.1 then hands them back as bytes instead of text, so the
+  starter could never find Bun's fingerprint. They are now read as text.
+- **Same fix for MediaMTX, chiaki-ng and `update`:** they read their checksums the same way and would
+  have failed next.
+- **Joining no longer crashes on an empty `join.txt`:** an empty saved host address made the
+  friend-side script stop with a PowerShell error instead of asking for the address.
+
 ## v0.2.2 — ping and fps on screen
 
 - **Ping and fps on screen:** a thin white readout in the top-left corner of the video, always

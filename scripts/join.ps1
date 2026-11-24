@@ -33,7 +33,7 @@ if (-not $me) {
 }
 Say "  Your Tailscale address: $me   (the host types this in once)" Green
 
-$hostIp = if (Test-Path $Saved) { (Get-Content $Saved -Raw).Trim() } else { '' }
+$hostIp = if (Test-Path $Saved) { "$(Get-Content $Saved -Raw)".Trim() } else { '' }
 if (-not $hostIp) {
   do { $hostIp = (Read-Host "  Host's Tailscale address (starts with 100.)").Trim() } until ($hostIp -match '^\d{1,3}(\.\d{1,3}){3}$')
   Set-Content $Saved $hostIp -Encoding ASCII
