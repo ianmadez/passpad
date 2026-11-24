@@ -4,10 +4,16 @@ import { isLayoutKey, mapKeys, PAD_BUTTONS } from './keymap.js';
 import { MouseLook } from './mouse-look.js';
 import { PressLatch } from './press-latch.js';
 
-/** Input is sampled every 4 ms; changes are sent at most every 8 ms, unchanged state every 200 ms. */
+/**
+ * Input is sampled every 4 ms and a change goes out on the very next sample (no batching delay).
+ * Unchanged state is repeated every 100 ms so a lost or late packet heals quickly; chiaki-ng
+ * releases everything after 500 ms of silence.
+ */
 const POLL_MS = 4;
-const MIN_SEND_MS = 8;
-const HEARTBEAT_MS = 200;
+const HEARTBEAT_MS = 100;
+/** The PS5 reads sticks as 8-bit values: anything finer is noise that would only cost packets. */
+const STICK_STEPS = 127;
+const quantize = (v) => Math.round(v * STICK_STEPS) / STICK_STEPS;
 /** Shorter taps (and clicks) are held this long so they survive sampling. */
 const MIN_PRESS_MS = 80;
 /** Radial dead zone for off-brand sticks; the guest can change it in Settings. */
@@ -77,7 +83,11 @@ function sample(keys, mouse, now) {
     right = stronger(right, deadzone(pad.axes[2] ?? 0, pad.axes[3] ?? 0));
   }
   for (const name of Object.keys(triggers)) if (buttons[name]) triggers[name] ||= 1;
-  return { buttons, triggers, sticks: { lx: left[0], ly: left[1], rx: right[0], ry: right[1] } };
+  return {
+    buttons,
+    triggers: { l2: quantize(triggers.l2), r2: quantize(triggers.r2) },
+    sticks: { lx: quantize(left[0]), ly: quantize(left[1]), rx: quantize(right[0]), ry: quantize(right[1]) },
+  };
 }
 
 const sameFrame = (a, b) => a && b && new Uint8Array(a).every((byte, i) => byte === new Uint8Array(b)[i]);
@@ -182,7 +192,7 @@ export function startInput({ active, send, layout, screen, onDrivingChange = () 
     if (tabHeld) state.buttons.touchpad = true;
     const frame = encodeInput(state);
     const changed = !sameFrame(frame, lastFrame);
-    if ((changed && now - lastSentAt >= MIN_SEND_MS) || now - lastSentAt >= HEARTBEAT_MS) {
+    if (changed || now - lastSentAt >= HEARTBEAT_MS) {
       send(frame);
       lastFrame = frame;
       lastSentAt = now;

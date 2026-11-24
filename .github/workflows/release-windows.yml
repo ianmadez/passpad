@@ -96,7 +96,7 @@ jobs:
         working-directory: passpad
         run: |
           zip -qr ../passpad-windows.zip START-PassPad.cmd JOIN-PassPad.cmd README.md LICENSE THIRD_PARTY_NOTICES.md \
-            SETUP-GUIDE.md package.json bun.lock tsconfig.json src public scripts/start-host.ps1 scripts/join.ps1 mediamtx chiaki
+            SETUP-GUIDE.md CHANGELOG.md package.json bun.lock tsconfig.json src public scripts/start-host.ps1 scripts/join.ps1 mediamtx chiaki
           cd .. && sha256sum passpad-windows.zip | cut -d' ' -f1 > passpad-windows.zip.sha256
       - uses: actions/upload-artifact@v4
         with:
@@ -111,11 +111,20 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          path: passpad
+      - name: Patch notes for this version (its section of CHANGELOG.md)
+        run: |
+          awk -v tag="${GITHUB_REF_NAME}" '$1=="##" && $2==tag {on=1; next} $1=="##" {on=0} on' passpad/CHANGELOG.md > notes.md
+          test -s notes.md || echo "See CHANGELOG.md" > notes.md
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
       - uses: softprops/action-gh-release@v2
         with:
+          name: PassPad ${{ github.ref_name }}
+          body_path: notes.md
           files: |
             chiaki-ng-passpad-win64.zip
             chiaki-ng-passpad-win64.zip.sha256

@@ -5,6 +5,11 @@
 # warn, not info: info logs every viewer's IP address.
 logLevel: warn
 
+# Packets queued per reader before dropping (default 512, ~0.4 s at 1080p if the writer ever stalls).
+# 256 still fits a whole 1080p keyframe burst, so recovery frames are never the ones dropped, while
+# capping how much stale video can pile up.
+writeQueueSize: 256
+
 authMethod: internal
 authInternalUsers:
   # Only this laptop may read the video (the PassPad server proxies it to friends).

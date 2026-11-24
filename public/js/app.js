@@ -54,6 +54,7 @@ function connect() {
   state.socket = socket;
   socket.addEventListener('open', () => {
     state.attempt = 0;
+    send({ type: 'ping', t: performance.now() });
   });
   socket.addEventListener('close', () => {
     if (state.attempt === 4)
@@ -376,9 +377,29 @@ const video = {
 };
 
 const stall = new StallWatch();
+let lastStats = null;
 setInterval(async () => {
   const stats = await video.session?.videoStats();
-  if (stats && stall.update(performance.now(), stats)) send({ type: 'keyframe' });
+  if (!stats) {
+    $('net-chip').hidden = true;
+    lastStats = null;
+    return;
+  }
+  if (stall.update(performance.now(), stats)) send({ type: 'keyframe' });
+  // fps, loss and jitter over the last half second: the three numbers that explain "it feels laggy".
+  if (lastStats) {
+    const seconds = (stats.timestamp - lastStats.timestamp) / 1000 || 0.5;
+    // Browsers report their own smoothed fps; fall back to counting decoded frames.
+    const fps = Math.round(stats.framesPerSecond ?? (stats.framesDecoded - lastStats.framesDecoded) / seconds);
+    const received = stats.packetsReceived - lastStats.packetsReceived;
+    const lost = Math.max(0, stats.packetsLost - lastStats.packetsLost);
+    const loss = received + lost > 0 ? (lost / (received + lost)) * 100 : 0;
+    const jitter = Math.round((stats.jitter ?? 0) * 1000);
+    const tone = loss > 3 || fps < 40 ? 'bad' : loss > 0.5 || fps < 55 || jitter > 30 ? 'warn' : 'ok';
+    setChip('net-chip', `${fps} fps · ${loss.toFixed(1)}% loss · ${jitter} ms jitter`, tone);
+    $('net-chip').hidden = false;
+  }
+  lastStats = stats;
 }, 500);
 
 // ---------- simulator and input visualizer ----------

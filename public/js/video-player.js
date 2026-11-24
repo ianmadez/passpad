@@ -74,7 +74,7 @@ export class WhepSession {
  * ask for a keyframe (the picture froze, or the browser itself asked with a PLI).
  */
 export class StallWatch {
-  constructor({ stallMs = 700, resendMs = 3000 } = {}) {
+  constructor({ stallMs = 450, resendMs = 2000 } = {}) {
     this.stallMs = stallMs;
     this.resendMs = resendMs;
     this.lastRequestAt = Number.NEGATIVE_INFINITY;

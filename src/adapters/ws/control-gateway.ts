@@ -57,7 +57,8 @@ export class ControlGateway {
 
   constructor(options: ControlGatewayOptions) {
     this.#o = options;
-    const wss = new WebSocketServer({ noServer: true, maxPayload: 4096 });
+    // No compression: frames are 15 bytes, and deflate only adds CPU time per message.
+    const wss = new WebSocketServer({ noServer: true, maxPayload: 4096, perMessageDeflate: false });
     options.server.on('upgrade', (req: IncomingMessage, socket, head) => {
       const peer = peerOf(req, options.identity);
       const path = URL.parse(req.url ?? '/', 'http://localhost')?.pathname;
@@ -65,6 +66,8 @@ export class ControlGateway {
         socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
         return;
       }
+      // Nagle's algorithm would hold small input frames back up to ~40 ms waiting to batch them.
+      if ('setNoDelay' in socket && typeof socket.setNoDelay === 'function') socket.setNoDelay(true);
       wss.handleUpgrade(req, socket, head, (ws) => this.#accept(ws, peer));
     });
   }

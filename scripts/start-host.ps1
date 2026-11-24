@@ -387,7 +387,7 @@ function Run-PassPad {
   foreach ($key in $cfg.Keys) { $serverEnv[$key] = $cfg[$key] }
 
   $mtxProc = Start-Supervised 'video' $mtx @("`"$(Join-Path $Root 'mediamtx\mediamtx.yml')`"") $mtxEnv 'AboveNormal'
-  $srvProc = Start-Supervised 'server' $bun @('src/main.ts') $serverEnv ''
+  $srvProc = Start-Supervised 'server' $bun @('src/main.ts') $serverEnv 'AboveNormal'
   Start-Sleep 2
   Start-Process "http://127.0.0.1:$Port/#watch"
 
@@ -400,7 +400,7 @@ function Run-PassPad {
     while ($true) {
       Start-Sleep 3
       if ($mtxProc.HasExited) { Warn 'Video service stopped, restarting'; $mtxProc = Start-Supervised 'video' $mtx @("`"$(Join-Path $Root 'mediamtx\mediamtx.yml')`"") $mtxEnv 'AboveNormal' }
-      if ($srvProc.HasExited) { Warn 'Server stopped, restarting'; $srvProc = Start-Supervised 'server' $bun @('src/main.ts') $serverEnv '' }
+      if ($srvProc.HasExited) { Warn 'Server stopped, restarting'; $srvProc = Start-Supervised 'server' $bun @('src/main.ts') $serverEnv 'AboveNormal' }
     }
   } finally {
     foreach ($p in @($srvProc, $mtxProc)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
