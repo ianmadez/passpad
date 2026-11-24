@@ -1,5 +1,10 @@
 # Patch notes
 
+## v0.2.2: ping and fps on screen
+
+- **Ping and fps on screen:** a thin white readout in the top-left corner of the video, always
+  visible while you play.
+
 ## v0.2.1 — less lag
 
 - **Faster controls:** every button press and stick move is sent the instant it happens, with

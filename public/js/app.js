@@ -289,6 +289,7 @@ setInterval(renderClock, 250);
 function showRtt(ms) {
   const rounded = Math.round(ms);
   setChip('rtt-chip', `${rounded} ms`, rounded < 220 ? 'ok' : rounded < 320 ? 'warn' : 'bad');
+  $('hud-ms').textContent = `${rounded} ms`;
 }
 setInterval(() => send({ type: 'ping', t: performance.now() }), 2000);
 
@@ -382,6 +383,7 @@ setInterval(async () => {
   const stats = await video.session?.videoStats();
   if (!stats) {
     $('net-chip').hidden = true;
+    $('hud-fps').textContent = '';
     lastStats = null;
     return;
   }
@@ -397,6 +399,7 @@ setInterval(async () => {
     const jitter = Math.round((stats.jitter ?? 0) * 1000);
     const tone = loss > 3 || fps < 40 ? 'bad' : loss > 0.5 || fps < 55 || jitter > 30 ? 'warn' : 'ok';
     setChip('net-chip', `${fps} fps · ${loss.toFixed(1)}% loss · ${jitter} ms jitter`, tone);
+    $('hud-fps').textContent = `${fps} fps`;
     $('net-chip').hidden = false;
   }
   lastStats = stats;

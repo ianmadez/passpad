@@ -1,6 +1,6 @@
 {
   "name": "passpad",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Pass the pad: share your PS5 with 1-4 friends over Tailscale, right in the browser. The host stays in charge.",
   "homepage": "https://github.com/ianmadez/passpad",
