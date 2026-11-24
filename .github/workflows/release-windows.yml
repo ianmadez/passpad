@@ -116,7 +116,7 @@ jobs:
           path: passpad
       - name: Patch notes for this version (its section of CHANGELOG.md)
         run: |
-          awk -v tag="${GITHUB_REF_NAME}" '$1=="##" && $2==tag {on=1; next} $1=="##" {on=0} on' passpad/CHANGELOG.md > notes.md
+          awk -v tag="${GITHUB_REF_NAME}" '$1=="##" && ($2==tag || $2==tag":") {on=1; next} $1=="##" {on=0} on' passpad/CHANGELOG.md > notes.md
           test -s notes.md || echo "See CHANGELOG.md" > notes.md
       - uses: actions/download-artifact@v4
         with:
