@@ -114,6 +114,9 @@ function handle(message) {
         $('sim').hidden = true;
         $('live').hidden = false;
         video.start();
+      } else if (!message.up) {
+        // Free the decoder and the WebRTC session while there is nothing to show.
+        video.stop();
       }
       break;
     case 'pong':
@@ -190,6 +193,7 @@ function render() {
   $('ps5-status').textContent = sim ? 'Simulator mode: no PS5 needed.' : (PS5_TEXT[state.chiaki.status] ?? '');
   const live = state.chiaki.status === 'connecting' || state.chiaki.status === 'streaming';
   $('connect').disabled = live || state.console !== 'chiaki';
+  $('connect').classList.toggle('busy', state.chiaki.status === 'connecting');
   $('disconnect').disabled = !live;
   for (const b of document.querySelectorAll('[data-quality]')) {
     b.ariaPressed = String(b.dataset.quality === state.chiaki.quality);
@@ -296,10 +300,15 @@ function toast(text) {
   toastTimer = setTimeout(() => (el.hidden = true), 5000);
 }
 
+/** One shared AudioContext: browsers cap how many can exist, and each holds an audio thread. */
+let audio = null;
+
 /** A short two-note chime, so the host notices a request while watching the TV. */
 function chime() {
   try {
-    const ctx = new AudioContext();
+    audio ??= new AudioContext();
+    const ctx = audio;
+    void ctx.resume();
     for (const [i, freq] of [660, 880].entries()) {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -436,6 +445,7 @@ $('shot').addEventListener('click', () => {
   canvas.toBlob((blob) => blob && download(blob, `passpad-${stamp()}.png`));
 });
 
+const MAX_CLIP_SECONDS = 300;
 let recorder = null;
 $('rec').addEventListener('click', () => {
   if (recorder) {
@@ -445,19 +455,31 @@ $('rec').addEventListener('click', () => {
   const stream = video.stream?.getTracks().length ? video.stream : $('sim').captureStream?.(30);
   if (!stream) return toast('No picture to record yet.');
   const chunks = [];
-  recorder = new MediaRecorder(stream, {
-    mimeType: MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm',
-  });
+  // VP8 is the cheapest to encode in software; the bitrate cap keeps a long clip at ~45 MB/min.
+  const mimeType = ['video/webm;codecs=vp8,opus', 'video/webm'].find((t) => MediaRecorder.isTypeSupported(t));
+  recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+  const startedAt = performance.now();
+  const ticker = setInterval(() => {
+    const s = Math.floor((performance.now() - startedAt) / 1000);
+    $('rec').textContent = `Stop & save ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    // Clips live in memory until saved: stop at the cap instead of growing without limit.
+    if (s >= MAX_CLIP_SECONDS && recorder?.state === 'recording') {
+      toast(`Clip saved at the ${MAX_CLIP_SECONDS / 60}-minute limit.`);
+      recorder.stop();
+    }
+  }, 1000);
   recorder.addEventListener('dataavailable', (e) => e.data.size && chunks.push(e.data));
   recorder.addEventListener('stop', () => {
+    clearInterval(ticker);
     download(new Blob(chunks, { type: 'video/webm' }), `passpad-${stamp()}.webm`);
+    chunks.length = 0;
     recorder = null;
     $('rec').dataset.on = 'false';
     $('rec').textContent = 'Record';
   });
   recorder.start(1000);
   $('rec').dataset.on = 'true';
-  $('rec').textContent = 'Stop & save';
+  $('rec').textContent = 'Stop & save 0:00';
 });
 
 // ---------- errors: log, copy, report ----------
@@ -551,6 +573,26 @@ window.addEventListener('error', (event) =>
 window.addEventListener('unhandledrejection', (event) =>
   trouble('The page hit an error', String(event.reason?.message ?? event.reason)),
 );
+
+// ---------- feedback ----------
+
+// Click ripple from the pointer position (CSS draws it; this only places it).
+document.addEventListener('pointerdown', (event) => {
+  const button = event.target instanceof Element ? event.target.closest('button') : null;
+  if (!button || button.disabled) return;
+  const box = button.getBoundingClientRect();
+  button.style.setProperty('--x', `${event.clientX - box.left}px`);
+  button.style.setProperty('--y', `${event.clientY - box.top}px`);
+  button.classList.remove('pop');
+  void button.offsetWidth; // restart the animation on quick repeat clicks
+  button.classList.add('pop');
+});
+document.addEventListener('animationend', (event) => {
+  if (event.animationName === 'ripple' && event.target instanceof Element) event.target.classList.remove('pop');
+});
+// Fade the picture in once frames actually arrive, instead of flashing black.
+$('live').addEventListener('playing', () => ($('live').dataset.playing = ''));
+$('live').addEventListener('emptied', () => delete $('live').dataset.playing);
 
 // ---------- controls ----------
 

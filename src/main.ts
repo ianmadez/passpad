@@ -77,7 +77,19 @@ function main(): void {
       quality: c.quality,
       bitrate: c.bitrate,
       isVideoUp: () => videoUp,
-      onLog: (line) => logs.add('info', 'chiaki', line),
+      onLog: (() => {
+        // chiaki-ng can be chatty when the network hiccups: keep at most 30 lines a second.
+        let windowStart = 0;
+        let count = 0;
+        return (line: string) => {
+          const now = Date.now();
+          if (now - windowStart > 1000) {
+            windowStart = now;
+            count = 0;
+          }
+          if (++count <= 30) logs.add('info', 'chiaki', line);
+        };
+      })(),
       onStatus: (status, quality) => {
         chiakiState = { status, quality };
         gateway?.broadcast({ type: 'chiaki', ...chiakiState });
@@ -165,6 +177,7 @@ function main(): void {
   }
 
   const shutdown = () => {
+    logs.flush();
     arbiter.reclaim({ role: 'host' });
     chiaki?.disconnect();
     process.exit(0);
