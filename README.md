@@ -68,6 +68,13 @@ Settings: [docs/configuration.md](docs/configuration.md). Security model:
 [docs/security.md](docs/security.md). WebSocket messages: [docs/protocol.md](docs/protocol.md).
 Releases are built by `.github/workflows/release-windows.yml` when you push a `v*` tag.
 
+## Credits
+
+PassPad is a fork of [PlayGTA](https://github.com/germanfndez/playgta) by
+[@germanfndez](https://github.com/germanfndez), who built the original project: the chiaki-ng
+network-input and stream-out patches, the WebRTC video path, the input codec and much of the
+server underneath this. PassPad turns it into a private version for a few friends. Thank you!
+
 ## License
 
 MIT, except `chiaki/` (patches to chiaki-ng, AGPL-3.0; see `chiaki/NOTICE`). Fonts: SIL OFL
